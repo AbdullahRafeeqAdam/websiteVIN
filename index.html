@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIN Decoder</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f9;
+            color: #333;
+        }
+        h1 {
+            text-align: center;
+        }
+        form {
+            max-width: 400px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        label, input, button, select {
+            display: block;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        input, select {
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        button {
+            padding: 10px;
+            font-size: 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #report {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        .report-title {
+            font-size: 24px;
+            margin-bottom: 20px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .report-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .report-item:last-child {
+            border-bottom: none;
+        }
+        .report-label {
+            font-weight: bold;
+            color: #555;
+        }
+        .report-value {
+            color: #000;
+        }
+        #download-pdf {
+            display: none;
+            margin: 20px auto;
+            padding: 10px 20px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        #download-pdf:hover {
+            background-color: #218838;
+        }
+    </style>
+</head>
+<body>
+    <h1>VIN Decoder</h1>
+    <form id="vin-form">
+        <label for="vin">Enter VIN:</label>
+        <input type="text" id="vin" name="vin" required>
+        <label for="name">Enter Name:</label>
+        <input type="text" id="name" name="name" required>
+        <label for="email">Enter Email:</label>
+        <input type="email" id="email" name="email" required>
+        <label for="report-type">Select Report Type:</label>
+        <select id="report-type" name="report-type" required>
+            <option value="basic">Basic</option>
+            <option value="premium">Premium</option>
+        </select>
+        <button type="submit">Next</button>
+    </form>
+    <div id="payment-form" style="display:none;">
+        <h2>Payment</h2>
+        <div id="dropin-container"></div>
+        <button id="submit-button" disabled>Submit Payment</button>
+    </div>
+    <div id="report"></div>
+    <button id="download-pdf">Download PDF</button>
+
+    <!-- Include Axios library -->
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <!-- Include jsPDF library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
+    <!-- Include Braintree Web Drop-in library -->
+    <script src="https://js.braintreegateway.com/web/dropin/1.30.0/js/dropin.min.js"></script>
+    <script>
+        const apiPrefix = "https://api.vindecoder.eu/3.2";
+        const apiKey = "41bd9dfd4a3d"; // Your API key
+        const secretKey = "1463818e23"; // Your secret key
+        const id = "decode";
+
+        document.getElementById('vin-form').addEventListener('submit', function(event) {
+            event.preventDefault(); // Prevent the form from submitting the traditional way
+
+            const vin = document.getElementById('vin').value.toUpperCase();
+            const name = document.getElementById('name').value;
+            const email = document.getElementById('email').value;
+            const reportType = document.getElementById('report-type').value;
+
+            document.getElementById('vin-form').style.display = 'none';
+            document.getElementById('payment-form').style.display = 'block';
+
+            axios.get('http://localhost:3000/client_token')
+                .then(response => {
+                    braintree.dropin.create({
+                        authorization: response.data,
+                        container: '#dropin-container'
+                    }, function (createErr, instance) {
+                        if (createErr) {
+                            console.error(createErr);
+                            return;
+                        }
+                        document.getElementById('submit-button').disabled = false;
+                        document.getElementById('submit-button').addEventListener('click', function () {
+                            instance.requestPaymentMethod(function (requestPaymentMethodErr, payload) {
+                                if (requestPaymentMethodErr) {
+                                    console.error(requestPaymentMethodErr);
+                                    return;
+                                }
+                                axios.post('http://localhost:3000/checkout', {
+                                    paymentMethodNonce: payload.nonce,
+                                    amount: reportType === 'premium' ? '20.00' : '10.00' // Example amounts
+                                }).then(response => {
+                                    if (response.data.success) {
+                                        // Payment successful
+                                        const controlSum = CryptoJS.SHA1(`${vin}|${id}|${apiKey}|${secretKey}`)
+                                            .toString(CryptoJS.enc.Hex)
+                                            .substring(0, 10);
+
+                                        const url = `${apiPrefix}/${apiKey}/${controlSum}/decode/${vin}.json`;
+
+                                        axios.get(url)
+                                            .then(response => {
+                                                const data = response.data;
+                                                let reportHtml = '<div class="report-title">Vehicle Report</div>';
+                                                reportHtml += formatReport(data);
+                                                document.getElementById('report').innerHTML = reportHtml;
+                                                document.getElementById('download-pdf').style.display = 'block';
+                                                document.getElementById('download-pdf').onclick = function() {
+                                                    downloadPDF(vin, data);
+                                                };
+                                                sendEmail(email, data);
+                                            })
+                                            .catch(error => {
+                                                console.error(error);
+                                                document.getElementById('report').textContent = "Error fetching report";
+                                            });
+                                    }
+                                }).catch(error => {
+                                    console.error(error);
+                                });
+                            });
+                        });
+                    });
+                }).catch(error => {
+                    console.error(error);
+                });
+        });
+
+        // Function to format the report data
+        function formatReport(data) {
+            let reportHtml = '';
+            for (const key in data) {
+                if (data.hasOwnProperty(key)) {
+                    if (typeof data[key] === 'object' && data[key] !== null) {
+                        reportHtml += `<div class="report-item"><div class="report-label">${key}:</div><div class="report-value">${formatReport(data[key])}</div></div>`;
+                    } else {
+                        reportHtml += `<div class="report-item"><div class="report-label">${key}:</div><div class="report-value">${data[key]}</div></div>`;
+                    }
+                }
+            }
+            return reportHtml;
+        }
+
+        // Function to download the report as a PDF
+        function downloadPDF(vin, data) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            doc.text(`Vehicle Report for VIN: ${vin}`, 10, 10);
+
+            let yPosition = 20;
+            function addDataToPDF(data, indent = 0) {
+                for (const key in data) {
+                    if (data.hasOwnProperty(key)) {
+                        if (typeof data[key] === 'object' && data[key] !== null) {
+                            doc.text(`${' '.repeat(indent)}${key}:`, 10, yPosition);
+                            yPosition += 10;
+                            addDataToPDF(data[key], indent + 2);
+                        } else {
+                            doc.text(`${' '.repeat(indent)}${key}: ${data[key]}`, 10, yPosition);
+                            yPosition += 10;
+                        }
+                        if (yPosition > 280) {
+                            doc.addPage();
+                            yPosition = 10;
+                        }
+                    }
+                }
+            }
+
+            addDataToPDF(data);
+
+            doc.save(`Vehicle_Report_${vin}.pdf`);
+        }
+
+        // Function to send the report via email
+        function sendEmail(email, data) {
+            axios.post('http://localhost:3000/send-report', {
+                email: email,
+                report: data
+            }).then(response => {
+                console.log('Email sent successfully');
+            }).catch(error => {
+                console.error('Error sending email:', error);
+            });
+        }
+
+        // Include CryptoJS library
+        (function() {
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.0.0/crypto-js.min.js';
+            script.onload = function() {
+                console.log('CryptoJS loaded');
+            };
+            document.head.appendChild(script);
+        })();
+    </script>
+</body>
+</html>
